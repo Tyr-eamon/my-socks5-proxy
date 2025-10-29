@@ -1,39 +1,55 @@
 #!/bin/sh
 
-# 检查环境变量
-if [ -z "$PROXY_USER" ] || [ -z "$PROXY_PASSWORD" ]; then
-  echo "错误: 必须设置 PROXY_USER 和 PROXY_PASSWORD 环境变量。"
+set -eu
+
+PORT="${PORT:-${SOCKS_PORT:-1080}}"
+LISTEN_ADDRESS="0.0.0.0"
+
+if [ -z "${PROXY_USER:-}" ] || [ -z "${PROXY_PASS:-}" ]; then
+  cat <<'EOF'
+错误: 必须设置 PROXY_USER 和 PROXY_PASS 环境变量。
+为了避免暴露裸代理，请提供认证信息后重试。
+EOF
   exit 1
 fi
 
-# 创建用户并设置密码
-adduser -D -s /bin/false "$PROXY_USER"
-echo "$PROXY_USER:$PROXY_PASSWORD" | chpasswd
-echo "SOCKS5 代理用户 $PROXY_USER 已创建。"
-
-# --- 动态配置 danted.conf ---
-echo "正在检测容器 IP..."
-# 使用 ip route 命令找到默认的出口 IP (e.g., 172.17.0.2)
-# BusyBox (Alpine 自带) 的 'ip route' 支持这个命令
-CONTAINER_IP=$(ip route get 1.1.1.1 | awk -F'src ' 'NF>1{print $2}' | awk '{print $1}')
-
-if [ -z "$CONTAINER_IP" ]; then
-    echo "错误: 无法自动检测到容器 IP。"
-    # 提供一个备用方案
-    CONTAINER_IP=$(hostname -i | awk '{print $1}')
-    if [ -z "$CONTAINER_IP" ]; then
-        echo "备用方案 (hostname -i) 也失败了。"
-        exit 1
-    fi
+if ! id "$PROXY_USER" >/dev/null 2>&1; then
+  adduser -D -s /bin/false "$PROXY_USER"
+  echo "SOCKS5 代理用户 $PROXY_USER 已创建。"
+else
+  echo "SOCKS5 代理用户 $PROXY_USER 已存在，更新密码。"
 fi
 
-echo "检测到容器 IP: $CONTAINER_IP"
+echo "$PROXY_USER:$PROXY_PASS" | chpasswd
 
-# 使用 sed 命令将 danted.conf 中的占位符替换为实际的 IP
-sed -i "s/__EXTERNAL_IP__/$CONTAINER_IP/g" /etc/danted.conf
-echo "danted.conf 配置已更新。"
-# --- 动态配置结束 ---
+echo "正在检测容器外网出口信息..."
+ROUTE_INFO=$(ip route get 1.1.1.1 2>/dev/null || true)
+CONTAINER_IP=$(printf '%s\n' "$ROUTE_INFO" | awk -F'src ' 'NF>1{print $2}' | awk '{print $1}')
+CONTAINER_IFACE=$(printf '%s\n' "$ROUTE_INFO" | awk '{for (i=1;i<=NF;i++) if ($i == "dev") {print $(i+1); exit}}')
 
-# 在前台启动 dante 服务器
+if [ -z "$CONTAINER_IP" ]; then
+  FALLBACK_IP=$(hostname -i 2>/dev/null | awk '{print $1}')
+  if [ -n "$FALLBACK_IP" ]; then
+    CONTAINER_IP="$FALLBACK_IP"
+  fi
+fi
+
+EXTERNAL_VALUE="$CONTAINER_IP"
+if [ -z "$EXTERNAL_VALUE" ] && [ -n "$CONTAINER_IFACE" ]; then
+  EXTERNAL_VALUE="$CONTAINER_IFACE"
+fi
+
+if [ -z "$EXTERNAL_VALUE" ]; then
+  echo "警告: 无法检测到容器外网出口信息，将使用监听地址 $LISTEN_ADDRESS。"
+  EXTERNAL_VALUE="$LISTEN_ADDRESS"
+fi
+
+echo "检测到容器出口配置: $EXTERNAL_VALUE"
+
+sed -i "s|__LISTEN_ADDRESS__|$LISTEN_ADDRESS|g" /etc/danted.conf
+sed -i "s|__LISTEN_PORT__|$PORT|g" /etc/danted.conf
+sed -i "s|__EXTERNAL_BIND__|$EXTERNAL_VALUE|g" /etc/danted.conf
+
+echo "SOCKS5 代理监听地址: ${LISTEN_ADDRESS}:${PORT}"
 echo "正在启动 SOCKS5 代理服务..."
 exec /usr/sbin/sockd -f /etc/danted.conf -D
