@@ -1,8 +1,7 @@
 FROM alpine:3.18
 
 RUN apk add --no-cache dante-server \
-    && cp /usr/sbin/danted /usr/local/bin/serve \
-    && rm -f /etc/danted.conf
+    && cp /usr/sbin/sockd /usr/local/bin/serve
 
 ENV PORT=8080 \
     USER=tyreamon \
