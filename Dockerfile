@@ -12,8 +12,11 @@ COPY entrypoint.sh /entrypoint.sh
 # 给予启动脚本执行权限
 RUN chmod +x /entrypoint.sh
 
-# 暴露 1080 端口
+# 暴露 1080 端口，便于本地和传统部署
 EXPOSE 1080
+
+# 健康检查：确认 Socks 端口已经开始监听
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["sh", "-c", "port=\"${PORT:-${SOCKS_PORT:-1080}}\"; nc -z 127.0.0.1 \"$port\""]
 
 # 容器启动时运行启动脚本
 ENTRYPOINT ["/entrypoint.sh"]
