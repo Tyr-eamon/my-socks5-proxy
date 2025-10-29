@@ -45,7 +45,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/${{ env.OWNER_LC }}/tyreamon:2025
+            ghcr.io/${{ env.OWNER_LC }}/sockstyr:2025
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=HTTP Server
